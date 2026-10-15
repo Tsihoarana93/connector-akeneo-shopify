@@ -1,0 +1,23 @@
+{
+    "mcpServers": {
+        "laravel-boost": {
+            "command": "vendor/bin/sail",
+            "args": [
+                "artisan",
+                "boost:mcp"
+            ]
+        },
+        "akeneo": {
+            "command": "docker",
+            "args": [
+                "exec",
+                "-i",
+                "fidelity-laravel.test-1",
+                "php",
+                "artisan",
+                "mcp:start",
+                "akeneo"
+            ]
+        }
+    }
+}

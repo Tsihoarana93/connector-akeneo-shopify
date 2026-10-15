@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__laravel-boost__database-query",
+      "mcp__laravel-boost__search-docs",
+      "Bash(grep -n -A12 '\"\\\\$1\" == \"mysql\"' vendor/laravel/sail/bin/sail)",
+      "mcp__laravel-boost__database-schema"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "laravel-boost"
+  ]
+}
