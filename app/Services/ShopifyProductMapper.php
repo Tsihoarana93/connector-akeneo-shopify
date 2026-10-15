@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AkeneoAttribute;
 use App\Models\Product;
 use App\Models\ProductModel;
 use Illuminate\Http\Client\ConnectionException;
@@ -38,6 +39,13 @@ class ShopifyProductMapper
      * Image attribute holding a variant's own image, usually set on the colour-level sub-model.
      */
     public const VARIANT_IMAGE_ATTRIBUTE = 'variation_image';
+
+    /**
+     * Attributes sent as product metafields, loaded on first use.
+     *
+     * @var Collection<int, AkeneoAttribute>|null
+     */
+    private ?Collection $metafieldAttributes = null;
 
     public function __construct(
         private AkeneoProductService $akeneo,
@@ -80,6 +88,7 @@ class ShopifyProductMapper
 
         $title = $this->text($values, 'name') ?? $this->text($values, 'erp_name') ?? ($rootModel?->code ?? $first->identifier);
         $variants = $products->map(fn (Product $product): array => $this->variant($product, $axes, $title))->all();
+        $metafields = $this->metafields($values, $first->values ?? []);
 
         return [
             'title' => $title,
@@ -95,7 +104,34 @@ class ShopifyProductMapper
             'productOptions' => $this->productOptions($axes, $variants),
             'files' => $this->files($values, $products, $title),
             'variants' => $variants,
+            ...($metafields === [] ? [] : ['metafields' => $metafields]),
         ];
+    }
+
+    /**
+     * Product metafields for the attributes enabled in the interface whose definition exists in Shopify.
+     * Values come from the root model, then from the first product (which also holds values set on sub-models).
+     *
+     * @param  array<string, mixed>  $values
+     * @param  array<string, mixed>  $productValues
+     * @return list<array{namespace: string, key: string, type: string, value: string}>
+     */
+    private function metafields(array $values, array $productValues): array
+    {
+        $this->metafieldAttributes ??= AkeneoAttribute::query()->sentToShopify()->orderBy('code')->get();
+
+        return $this->metafieldAttributes
+            ->map(fn (AkeneoAttribute $attribute): ?array => ($value = $attribute->toMetafieldValue(
+                self::pickValue($values, $attribute->code) ?? self::pickValue($productValues, $attribute->code)
+            )) === null ? null : [
+                'namespace' => AkeneoAttribute::SHOPIFY_NAMESPACE,
+                'key' => $attribute->shopifyKey(),
+                'type' => $attribute->shopifyType(),
+                'value' => $value,
+            ])
+            ->filter()
+            ->values()
+            ->all();
     }
 
     /**
@@ -152,7 +188,7 @@ class ShopifyProductMapper
             ? [['optionName' => 'Title', 'name' => 'Default Title']]
             : array_map(fn (string $axis): array => [
                 'optionName' => $this->optionName($axis),
-                'name' => $this->axisValue($axis, $this->value($values, $axis)),
+                'name' => $this->axisValue($axis, self::pickValue($values, $axis)),
             ], $axes);
 
         $variant = [
@@ -223,7 +259,7 @@ class ShopifyProductMapper
      */
     private function price(array $values): string
     {
-        $prices = collect($this->value($values, 'price') ?? [])
+        $prices = collect(self::pickValue($values, 'price') ?? [])
             ->filter(fn (array $price): bool => is_numeric($price['amount'] ?? null));
 
         $price = $prices->firstWhere('currency', config('services.shopify.currency'))
@@ -239,7 +275,7 @@ class ShopifyProductMapper
      */
     private function text(array $values, string $attribute): ?string
     {
-        $data = $this->value($values, $attribute);
+        $data = self::pickValue($values, $attribute);
 
         return is_scalar($data) && trim((string) $data) !== '' ? (string) $data : null;
     }
@@ -249,7 +285,7 @@ class ShopifyProductMapper
      *
      * @param  array<string, mixed>  $values
      */
-    private function value(array $values, string $attribute): mixed
+    public static function pickValue(array $values, string $attribute): mixed
     {
         $candidates = collect($values[$attribute] ?? []);
 

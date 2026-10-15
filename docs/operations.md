@@ -26,6 +26,8 @@ vendor/bin/sail artisan fidelity:create-user you@example.com --name="You"
 vendor/bin/sail logs queue
 ```
 
+To send more Akeneo attributes to Shopify, open `/attributes`: enable an attribute, save, click **Create in Shopify**, then push. See [Attribute metafields](shopify-mapping.md#attribute-metafields).
+
 Inspect the push state:
 
 ```sql
@@ -62,8 +64,12 @@ The cost is one synchronous `productSet` round trip per product, about 1 s. Shop
 | `Akeneo returned no products, so the N local products were not pruned…` | `--prune` refused to empty the table. Check `AKENEO_*` and the API user's permissions (channels, locales, categories). |
 | `Shopify could not process image X: …` | Shopify rejected the image (for example over 20 MB or 20 megapixels). Replace it in Akeneo. The product is retried on the next push. |
 | `Image X was not found in Akeneo.` | The product references a media file Akeneo no longer has. Re-upload the image in Akeneo, then sync. |
+| `Not started: another run holds the fidelity:… lock.` (possibly followed by `The latest … run still marked as running is #N.`) | Another sync (or the **Update from Akeneo** button) or push holds the lock. Wait for it to finish. If its process was killed outside the queue (container restart during a CLI run), the lock expires after 4 h, or release it by hand: `vendor/bin/sail artisan tinker --execute 'Cache::lock("fidelity:akeneo-writes")->forceRelease();'` (or `fidelity:shopify-push`). Only do this when nothing is really running. |
+| **Update from Akeneo** says a sync is running | A sync holds `fidelity:akeneo-writes`. It refreshes the attributes too, so wait for it to finish. |
 | A run started from the interface stays **Queued** | The queue worker isn't running. Start it with `vendor/bin/sail up -d queue`. |
-| A run shows **Interrupted before it finished** | Its process was killed (container restart, timeout). The next run of the same command marks it this way. Start it again. |
+| A run shows **Interrupted before it finished** | Its process was killed (container restart, timeout). The next run of the same command marks it this way, once it has the lock, so that run really is dead. Start it again. |
+| `A akeneo.X definition of type T already exists in Shopify…` on `/attributes` | A definition with that key was created by hand with another type. Choose type T for the attribute, or delete the definition in Shopify, then click **Create in Shopify** again. |
+| `/attributes` is empty or out of date | Click **Update from Akeneo** on `/attributes`, or run `fidelity:sync-products`. |
 | `Product model X has not been synced from Akeneo` | A product references a model that is missing locally. Run `fidelity:sync-products` first. |
 | `Sync aborted: …` | Akeneo is unreachable, or rejected the credentials. Check `AKENEO_*` and that `AKENEO_BASE_URL` is reachable from the Sail container. |
 
@@ -73,4 +79,4 @@ The cost is one synchronous `productSet` round trip per product, about 1 s. Shop
 - **Deletions.** Products removed from Akeneo are not archived or deleted in Shopify.
 - **Scheduling.** Only the sync is scheduled. The push could run right after a successful sync.
 - **Bulk operations.** For catalogs of 10k+ products, switch to staged JSONL uploads with `bulkOperationRunMutation`, using the same `productSet` input.
-- Only the main fields are mapped. Other Akeneo attributes could become Shopify metafields.
+- **Attribute metafields.** Only product-level metafields are sent, and a metafield isn't deleted from Shopify when its value is removed in Akeneo or the attribute is disabled.

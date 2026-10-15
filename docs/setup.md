@@ -62,3 +62,26 @@ vendor/bin/sail artisan fidelity:push-products             # then the rest
 ```
 
 The first push also creates the `akeneo.code` product metafield definition in Shopify (see [Shopify mapping](shopify-mapping.md)).
+
+## Production
+
+The app must be served over **HTTPS** in production. With `APP_ENV=production`:
+
+- **Debug mode is always off.** `AppServiceProvider` turns it off even if `APP_DEBUG=true` was left in `.env`, and logs a warning (at most once an hour) until you fix the variable. Debug pages would otherwise show stack traces, queries and environment values.
+- **Generated URLs use `https://`** (`URL::forceHttps()`).
+- **The session cookie is `Secure`.** `SESSION_SECURE_COOKIE` defaults to `true`, so the browser only sends it over HTTPS. Set it to `false` only if you really serve production over plain HTTP, which you shouldn't.
+
+Checklist:
+
+| Setting | Value |
+|---|---|
+| `APP_ENV` | `production` |
+| `APP_DEBUG` | `false` |
+| `APP_URL` | the public `https://` URL |
+| `APP_KEY` | generated once with `php artisan key:generate`, and kept secret |
+| `LOG_LEVEL` | `warning` (or `info`) instead of `debug` |
+| TLS | terminated by the web server or a reverse proxy. Behind a proxy, configure trusted proxies (`$middleware->trustProxies(...)` in `bootstrap/app.php`) so Laravel sees HTTPS and the client IP, which the login rate limit uses. |
+| Deploy | `composer install --no-dev --optimize-autoloader`, `npm ci && npm run build`, `php artisan migrate --force`, `php artisan optimize` |
+| Workers | a queue worker (`php artisan queue:work`) and the scheduler (`php artisan schedule:work`, or a cron running `schedule:run` every minute) |
+
+Every response also carries browser security headers (`App\Http\Middleware\SecurityHeaders`, registered globally): a Content Security Policy that only allows the app's own scripts plus the Bunny Fonts stylesheet and fonts, `X-Frame-Options: DENY` and `frame-ancestors 'none'` against clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a restrictive `Permissions-Policy`, and HSTS (one year) on HTTPS requests. If you add an external script, font or image source, add it to the policy in that middleware, or the browser blocks it.

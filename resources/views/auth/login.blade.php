@@ -1,31 +1,32 @@
 <x-layouts.app title="Log in">
-    <div class="mx-auto mt-16 w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <h1 class="mb-6 text-lg font-semibold">Log in to Fidelity syncs</h1>
+    <div class="mx-auto mt-12 flex w-full max-w-sm flex-col gap-8">
+        <div class="flex flex-col gap-3 text-center">
+            <h1 class="page-title">Welcome back</h1>
+            <p class="text-ink-muted">Log in to Fidelity syncs to manage the Akeneo → Shopify sync.</p>
+        </div>
 
-        <form method="POST" action="{{ route('login.store') }}" class="flex flex-col gap-4">
+        <form method="POST" action="{{ route('login.store') }}" class="card flex flex-col gap-5 p-6">
             @csrf
 
-            <label class="flex flex-col gap-1 text-sm">
-                Email
-                <input type="email" name="email" value="{{ old('email') }}" required autofocus autocomplete="username"
-                       class="rounded-md border border-gray-300 px-3 py-2 dark:border-gray-700 dark:bg-gray-800">
+            <label class="flex flex-col gap-2">
+                <span class="label-mono">Email</span>
+                <input type="email" name="email" value="{{ old('email') }}" required autofocus autocomplete="username" class="field">
             </label>
 
-            <label class="flex flex-col gap-1 text-sm">
-                Password
-                <input type="password" name="password" required autocomplete="current-password"
-                       class="rounded-md border border-gray-300 px-3 py-2 dark:border-gray-700 dark:bg-gray-800">
+            <label class="flex flex-col gap-2">
+                <span class="label-mono">Password</span>
+                <input type="password" name="password" required autocomplete="current-password" class="field">
             </label>
 
             @error('email')
-                <p class="text-sm text-red-600 dark:text-red-400">{{ $message }}</p>
+                <p class="alert-error">{{ $message }}</p>
             @enderror
 
-            <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" name="remember" value="1"> Remember me
+            <label class="flex items-center gap-2 text-sm text-ink-muted">
+                <input type="checkbox" name="remember" value="1" class="checkbox"> Remember me
             </label>
 
-            <button type="submit" class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200">Log in</button>
+            <button type="submit" class="btn-primary py-2.5">Log in</button>
         </form>
     </div>
 </x-layouts.app>

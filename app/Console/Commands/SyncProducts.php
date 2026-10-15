@@ -3,8 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Console\Concerns\RecordsSyncRun;
+use App\Models\AkeneoAttribute;
 use App\Models\Product;
 use App\Models\ProductModel;
+use App\Services\AkeneoAttributeSync;
 use App\Services\AkeneoProductService;
 use Generator;
 use Illuminate\Console\Command;
@@ -22,20 +24,24 @@ class SyncProducts extends Command
                             {--prune : Delete local products and product models that no longer exist in Akeneo}
                             {--sync-run= : ID of a queued sync run to record into (used by the interface)}';
 
-    protected $description = 'Sync product models and products from Akeneo PIM into the local database';
+    protected $description = 'Sync attributes, product models and products from Akeneo PIM into the local database';
 
     private const BATCH_SIZE = 100;
 
-    public function handle(AkeneoProductService $akeneo): int
+    public function handle(AkeneoProductService $akeneo, AkeneoAttributeSync $attributeSync): int
     {
-        return $this->recordSyncRun(['prune' => (bool) $this->option('prune')], fn (): int => $this->sync($akeneo));
+        return $this->recordSyncRun(['prune' => (bool) $this->option('prune')], fn (): int => $this->sync($akeneo, $attributeSync));
     }
 
-    private function sync(AkeneoProductService $akeneo): int
+    private function sync(AkeneoProductService $akeneo, AkeneoAttributeSync $attributeSync): int
     {
         $syncedAt = now()->startOfSecond();
 
         try {
+            $this->info('Syncing attributes from Akeneo...');
+            $attributes = $attributeSync->sync($syncedAt);
+            $this->info("  {$attributes} attributes synced.");
+
             $this->info('Syncing product models from Akeneo...');
             $models = $this->syncAll(
                 ProductModel::class,
@@ -60,13 +66,15 @@ class SyncProducts extends Command
             return self::FAILURE;
         }
 
-        $this->info("Done. {$models} product models and {$products} products synced.");
+        $this->info("Done. {$attributes} attributes, {$models} product models and {$products} products synced.");
 
         $this->syncRunCounts = [
+            'attributes' => $attributes,
             'product_models' => $models,
             'products' => $products,
             'pruned_product_models' => $this->handleStale(ProductModel::class, $syncedAt, $models, 'product models'),
             'pruned_products' => $this->handleStale(Product::class, $syncedAt, $products, 'products'),
+            'pruned_attributes' => $this->handleStale(AkeneoAttribute::class, $syncedAt, $attributes, 'attributes'),
         ];
 
         return self::SUCCESS;

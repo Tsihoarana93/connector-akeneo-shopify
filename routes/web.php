@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AkeneoAttributeController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\SyncRunController;
 use Illuminate\Support\Facades\Route;
@@ -16,6 +17,13 @@ Route::middleware('auth')->group(function () {
 
     Route::resource('sync-runs', SyncRunController::class)->only(['index', 'show', 'store']);
     Route::get('/sync-runs/{syncRun}/log', [SyncRunController::class, 'log'])->name('sync-runs.log');
+
+    Route::get('/attributes', [AkeneoAttributeController::class, 'index'])->name('attributes.index');
+    Route::post('/attributes/sync', [AkeneoAttributeController::class, 'sync'])->name('attributes.sync');
+    Route::post('/attributes/definitions', [AkeneoAttributeController::class, 'storeMissingDefinitions'])->name('attributes.definitions.store');
+    Route::get('/attributes/{attribute:code}', [AkeneoAttributeController::class, 'show'])->name('attributes.show');
+    Route::put('/attributes/{attribute:code}', [AkeneoAttributeController::class, 'update'])->name('attributes.update');
+    Route::post('/attributes/{attribute:code}/definition', [AkeneoAttributeController::class, 'storeDefinition'])->name('attributes.definition.store');
 });
 
 if (app()->isLocal()) {

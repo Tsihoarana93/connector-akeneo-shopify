@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\SyncRunStatus;
+use App\Models\AkeneoAttribute;
 use App\Models\Product;
 use App\Models\ProductModel;
 use App\Models\ShopifyFile;
@@ -11,6 +12,7 @@ use App\Models\SyncRun;
 use Closure;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
@@ -133,6 +135,52 @@ class PushProductsTest extends TestCase
         ], $input['productOptions']);
         $this->assertSame(['AMOR-L', 'AMOR-M'], array_column($input['variants'], 'sku'));
         $this->assertSame([['optionName' => 'Color', 'name' => 'Blue'], ['optionName' => 'Size', 'name' => 'Medium']], $input['variants'][1]['optionValues']);
+    }
+
+    public function test_it_sends_enabled_attributes_with_a_definition_as_metafields_with_option_labels(): void
+    {
+        AkeneoAttribute::factory()->simpleSelect(['600' => '60°'])->enabled()->withDefinition()->create(['code' => 'wash_temperature']);
+        AkeneoAttribute::factory()->enabled()->create(['code' => 'material']);
+        AkeneoAttribute::factory()->withDefinition()->create(['code' => 'supplier']);
+        $product = $this->standaloneProduct('SKU-1');
+        $product->update(['values' => [
+            ...$product->values,
+            'wash_temperature' => [['locale' => null, 'scope' => null, 'data' => '600']],
+            'material' => [['locale' => null, 'scope' => null, 'data' => 'Wool']],
+            'supplier' => [['locale' => null, 'scope' => null, 'data' => 'Zaro']],
+        ]]);
+        $this->fakeShopify();
+
+        $this->artisan('fidelity:push-products')->assertSuccessful();
+
+        $this->assertSame([
+            ['namespace' => 'akeneo', 'key' => 'wash_temperature', 'type' => 'single_line_text_field', 'value' => '60°'],
+        ], $this->productSetCalls[0]['input']['metafields']);
+    }
+
+    public function test_it_sends_no_metafield_for_an_attribute_without_a_value(): void
+    {
+        AkeneoAttribute::factory()->simpleSelect(['600' => '60°'])->enabled()->withDefinition()->create(['code' => 'wash_temperature']);
+        $this->standaloneProduct('SKU-1');
+        $this->fakeShopify();
+
+        $this->artisan('fidelity:push-products')->assertSuccessful();
+
+        $this->assertArrayNotHasKey('metafields', $this->productSetCalls[0]['input']);
+    }
+
+    public function test_it_does_not_start_while_another_push_holds_the_lock(): void
+    {
+        $this->standaloneProduct('SKU-1');
+        $running = SyncRun::factory()->push()->running()->create();
+        Cache::lock(SyncRun::SHOPIFY_PUSH_LOCK, 60)->get();
+
+        $this->artisan('fidelity:push-products')
+            ->expectsOutput("Not started: another run holds the fidelity:shopify-push lock. Try again when it finishes. The latest fidelity:push-products run still marked as running is #{$running->id}.")
+            ->assertFailed();
+
+        Http::assertNothingSent();
+        $this->assertSame(0, ShopifyProduct::query()->count());
     }
 
     public function test_it_falls_back_to_the_eur_price_when_there_is_no_price_in_the_store_currency(): void

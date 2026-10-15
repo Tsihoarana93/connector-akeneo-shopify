@@ -5,7 +5,114 @@
 @source '../**/*.blade.php';
 @source '../**/*.js';
 
+/* The interface is dark only: `dark:` follows the `dark` class set on <html>, so Laravel's pagination renders its dark styles. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Palette and fonts taken from clears.ai, with their purple brand colour replaced by green. */
 @theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-sans: 'Figtree', 'Avenir Next', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Space Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+    --color-brand: #86efac;
+    --color-brand-strong: #4ade80;
+
+    --color-canvas: #000000;
+    --color-panel: #0d0d0d;
+    --color-panel-raised: #191919;
+    --color-line: #2c2c2c;
+    --color-line-strong: #424242;
+
+    --color-ink: #fcfcfc;
+    --color-ink-muted: #b9b9b9;
+    --color-ink-subtle: #828282;
+}
+
+@layer base {
+    html {
+        color-scheme: dark;
+    }
+
+    ::selection {
+        @apply bg-brand text-black;
+    }
+}
+
+@utility label-mono {
+    @apply font-mono text-[11px] tracking-[0.12em] text-ink-subtle uppercase;
+}
+
+@utility page-title {
+    @apply text-3xl font-light tracking-tight text-ink sm:text-4xl;
+}
+
+@utility section-title {
+    @apply font-mono text-xs tracking-[0.12em] text-ink-muted uppercase;
+}
+
+@utility link {
+    @apply text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:text-brand hover:decoration-brand;
+}
+
+@utility btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-sm border px-3 py-1.5 font-mono text-xs tracking-[0.08em] whitespace-nowrap uppercase transition disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none;
+}
+
+@utility btn-primary {
+    @apply btn border-brand bg-brand text-black shadow-[0_0_28px_-6px] shadow-brand/60 before:size-1.5 before:bg-black before:content-[''] hover:border-brand-strong hover:bg-brand-strong;
+}
+
+@utility btn-secondary {
+    @apply btn border-line-strong bg-transparent text-ink hover:border-ink;
+}
+
+@utility btn-ghost {
+    @apply btn border-transparent bg-panel-raised text-ink hover:border-line-strong;
+}
+
+@utility card {
+    @apply rounded-md border border-line bg-panel;
+}
+
+@utility field {
+    @apply rounded-sm border border-line bg-canvas px-3 py-1.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:ring-1 focus:ring-brand/40 focus:outline-none disabled:opacity-50;
+}
+
+@utility checkbox {
+    @apply size-4 rounded-sm border-line-strong bg-canvas accent-brand;
+}
+
+@utility data-table {
+    @apply w-full text-left text-sm;
+
+    & thead {
+        @apply border-b border-line;
+    }
+
+    & th {
+        @apply label-mono px-4 py-3 font-normal;
+    }
+
+    & td {
+        @apply px-4 py-3;
+    }
+
+    & tbody {
+        @apply divide-y divide-line;
+    }
+
+    & tbody tr {
+        @apply transition-colors hover:bg-panel-raised/60;
+    }
+}
+
+@utility alert-success {
+    @apply rounded-sm border border-brand/30 bg-brand/5 px-4 py-3 text-sm text-brand;
+}
+
+@utility alert-error {
+    @apply rounded-sm border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300;
+}
+
+@utility badge {
+    @apply inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 font-mono text-[11px] tracking-[0.08em] whitespace-nowrap uppercase before:size-1.5 before:bg-current before:content-[''];
 }

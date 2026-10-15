@@ -40,7 +40,8 @@ class RunSyncCommand implements ShouldQueue
     }
 
     /**
-     * Mark the run as failed when the job died before the command could record it.
+     * Mark the run as failed when the job died before the command could record it, and release the lock the command
+     * held (only that run's own lock), so the next run doesn't have to wait for the lock to expire.
      */
     public function failed(?Throwable $exception): void
     {
@@ -50,9 +51,12 @@ class RunSyncCommand implements ShouldQueue
             return;
         }
 
+        $this->syncRun->heldLock()?->release();
+
         $this->syncRun->update([
             'status' => SyncRunStatus::Failed,
             'message' => $exception?->getMessage() ?: 'The queued job failed.',
+            'lock_owner' => null,
             'finished_at' => now(),
         ]);
     }

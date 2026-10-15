@@ -10,6 +10,7 @@ use Throwable;
 
 /**
  * Records a command run in `sync_runs` and copies everything the command prints to the run's log file.
+ * The run holds its command's lock (`SyncRun::LOCKS`) from start to finish, so two runs never write the same data at once.
  * The command must define a `{--sync-run=}` option.
  */
 trait RecordsSyncRun
@@ -36,19 +37,53 @@ trait RecordsSyncRun
      */
     protected function recordSyncRun(array $options, Closure $body): int
     {
-        $this->syncRun = $this->startSyncRun($options);
+        $lock = SyncRun::lockFor((string) $this->getName());
 
-        try {
-            $exitCode = $body();
-        } catch (Throwable $exception) {
-            $this->finishSyncRun(SyncRunStatus::Failed, $exception->getMessage());
-
-            throw $exception;
+        if (! $lock->get()) {
+            return $this->refuseSyncRun();
         }
 
-        $this->finishSyncRun($exitCode === self::SUCCESS ? SyncRunStatus::Succeeded : SyncRunStatus::Failed, $this->syncRunMessage);
+        try {
+            $this->syncRun = $this->startSyncRun($options, $lock->owner());
 
-        return $exitCode;
+            try {
+                $exitCode = $body();
+            } catch (Throwable $exception) {
+                $this->finishSyncRun(SyncRunStatus::Failed, $exception->getMessage());
+
+                throw $exception;
+            }
+
+            $this->finishSyncRun($exitCode === self::SUCCESS ? SyncRunStatus::Succeeded : SyncRunStatus::Failed, $this->syncRunMessage);
+
+            return $exitCode;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Don't start while another run holds the lock. A queued run claimed from the interface is closed with the reason;
+     * a refused CLI or scheduler run records nothing, so a long run doesn't leave a trail of failed rows behind it.
+     */
+    private function refuseSyncRun(): int
+    {
+        $command = (string) $this->getName();
+        $running = SyncRun::query()->where('command', $command)->where('status', SyncRunStatus::Running)->latest('id')->first();
+        $message = 'Not started: another run holds the '.SyncRun::LOCKS[$command][0].' lock. Try again when it finishes.'
+            .($running !== null ? " The latest {$command} run still marked as running is #{$running->id}." : '');
+
+        $this->error($message);
+
+        if (filled($this->option('sync-run'))) {
+            SyncRun::query()->where('command', $command)->whereKey($this->option('sync-run'))->update([
+                'status' => SyncRunStatus::Failed,
+                'message' => $message,
+                'finished_at' => now(),
+            ]);
+        }
+
+        return self::FAILURE;
     }
 
     /**
@@ -70,9 +105,11 @@ trait RecordsSyncRun
     }
 
     /**
+     * Start the run. It holds the lock, so any other run still marked as running belongs to a process that died.
+     *
      * @param  array<string, mixed>  $options
      */
-    private function startSyncRun(array $options): SyncRun
+    private function startSyncRun(array $options, string $lockOwner): SyncRun
     {
         $command = (string) $this->getName();
 
@@ -93,6 +130,7 @@ trait RecordsSyncRun
         $run->fill([
             'status' => SyncRunStatus::Running,
             'options' => $options,
+            'lock_owner' => $lockOwner,
             'started_at' => now(),
         ])->save();
 
@@ -111,6 +149,7 @@ trait RecordsSyncRun
             'status' => $status,
             'counts' => $this->syncRunCounts,
             'message' => $message,
+            'lock_owner' => null,
             'finished_at' => now(),
         ]);
     }

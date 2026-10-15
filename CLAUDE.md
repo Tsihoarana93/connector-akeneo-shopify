@@ -28,7 +28,7 @@ php artisan migrate
 ## Artisan Commands
 
 ```bash
-# Sync product models and products from Akeneo PIM into the database (scheduled hourly in routes/console.php)
+# Sync attributes, product models and products from Akeneo PIM into the database (scheduled hourly in routes/console.php)
 php artisan fidelity:sync-products [--prune]
 
 # Push synced products to Shopify (only changed products unless --force)
@@ -44,20 +44,22 @@ This is a **Laravel 12 tool** that syncs products from an Akeneo PIM into MySQL 
 
 **Sync pipeline** (`fidelity:sync-products`):
 1. `App\Services\AkeneoProductService` authenticates against Akeneo (OAuth password grant, token cached) using the `services.akeneo.*` config (`config/services.php`, `AKENEO_*` env vars)
-2. Pages (`search_after`) through `/api/rest/v1/product-models` then `/api/rest/v1/products`
-3. Upserts into `product_models` (by `code`; root models also store their family-variant `variant_axes`) and `products` (by `identifier`), keeping `values` and the full `raw_payload` as JSON. `--prune` deletes rows not seen in the run, unless Akeneo returned no rows for that table
+2. Pages through `/api/rest/v1/attributes` (plus options of select attributes, offset pagination), then (`search_after`) `/api/rest/v1/product-models` and `/api/rest/v1/products`
+3. Upserts into `akeneo_attributes` (by `code`; only Akeneo columns, so the Shopify mapping set in the interface survives), `product_models` (by `code`; root models also store their family-variant `variant_axes`) and `products` (by `identifier`), keeping `values` and the full `raw_payload` as JSON. `--prune` deletes rows not seen in the run, unless Akeneo returned no rows for that table
 
 **Push pipeline** (`fidelity:push-products`):
 1. `App\Services\ShopifyAdminService` talks to the Shopify GraphQL Admin API (`services.shopify.*`, `SHOPIFY_*` env vars) using a Dev Dashboard app's client credentials grant (24h token, cached), retrying on `THROTTLED`
 2. Ensures a unique `akeneo.code` product metafield definition exists; it is the `customId` used to upsert with `productSet`
-3. Groups products by root product model (`model:{code}` → one Shopify product with variants, options from `variant_axes` with Akeneo option labels) or standalone (`product:{identifier}`); `App\Services\ShopifyProductMapper` builds the `ProductSetInput` (en_US, `ecommerce` then `print` channel, EUR price; gallery = `image`/`picture` then each `variation_image`, variant image = `variation_image`). `App\Services\ProductImageUploader` downloads each Akeneo media file once, uploads it with `stagedUploadsCreate` + `fileCreate`, and remembers the file ID in `shopify_files`
+3. Groups products by root product model (`model:{code}` → one Shopify product with variants, options from `variant_axes` with Akeneo option labels) or standalone (`product:{identifier}`); `App\Services\ShopifyProductMapper` builds the `ProductSetInput` (en_US, `ecommerce` then `print` channel, EUR price; gallery = `image`/`picture` then each `variation_image`, variant image = `variation_image`; `metafields` = `akeneo.{key}` for each attribute enabled in the interface whose definition exists, converted by `AkeneoAttribute::toMetafieldValue()`). `App\Services\ProductImageUploader` downloads each Akeneo media file once, uploads it with `stagedUploadsCreate` + `fileCreate`, and remembers the file ID in `shopify_files`
 4. New products are created as `DRAFT`; updates never send `status`. `shopify_products` stores the Shopify ID, a payload hash (unchanged groups are skipped) and the last error
 
-**Run history**: both commands use `App\Console\Concerns\RecordsSyncRun`, which records each run in `sync_runs` (status, options, counts, message) and copies every output line to `storage/app/private/sync-runs/{id}.log`. A run started from the interface claims its queued row with the internal `--sync-run=` option.
+**Run history**: both commands use `App\Console\Concerns\RecordsSyncRun`, which holds the command's atomic cache lock for the whole run (`SyncRun::LOCKS`: `fidelity:akeneo-writes`, shared with the attribute **Update from Akeneo** button, and `fidelity:shopify-push`; a run that can't get it prints `Not started: …` and fails), records each run in `sync_runs` (status, options, counts, message, `lock_owner`) and copies every output line to `storage/app/private/sync-runs/{id}.log`. Older `running` rows are only marked interrupted once the lock is held; `RunSyncCommand::failed()` releases a killed job's lock. A run started from the interface claims its queued row with the internal `--sync-run=` option.
 
-**Web interface**: a login-protected Blade + Tailwind UI (`/sync-runs`, `SyncRunController`) lists runs, shows details, downloads logs, and starts a sync or push through the queued `App\Jobs\RunSyncCommand` (the `queue` service in `docker-compose.yml`; `DB_QUEUE_RETRY_AFTER` must exceed its 3,600 s timeout). Users are created with `fidelity:create-user`; there is no registration.
+**Attribute metafields**: `/attributes` (`AkeneoAttributeController`) lists Akeneo attributes, shows when they were last retrieved (latest `synced_at`) and has an **Update from Akeneo** button (`App\Services\AkeneoAttributeSync`, shared with the sync command, no pruning); it lists them with usage and sample values (`App\Services\AttributeUsage`) and options; an attribute is enabled with a Shopify name/key/type, then its metafield definition is created or linked by `App\Services\AttributeDefinitionManager` (name, key and type are locked afterwards).
 
-**Database**: MySQL via Laravel Sail. Tables: `products`, `product_models`, `shopify_products`, `shopify_files`, `sync_runs`, plus `users` and `sessions` for the interface (migrations in `database/migrations/`).
+**Web interface**: a login-protected Blade + Tailwind UI (`/sync-runs`, `SyncRunController`) lists runs, shows details, downloads logs, and starts a sync or push through the queued `App\Jobs\RunSyncCommand` (the `queue` service in `docker-compose.yml`; `DB_QUEUE_RETRY_AFTER` must exceed its 3,600 s timeout). Users are created with `fidelity:create-user`; there is no registration. `App\Http\Middleware\SecurityHeaders` (global) sends a CSP (own scripts only, plus Bunny Fonts), `X-Frame-Options: DENY`, nosniff, referrer policy and HSTS over HTTPS; add any new external asset origin to its policy. In production, `AppServiceProvider` forces HTTPS URLs and debug mode off, and the session cookie defaults to `Secure`.
+
+**Database**: MySQL via Laravel Sail. Tables: `akeneo_attributes`, `products`, `product_models`, `shopify_products`, `shopify_files`, `sync_runs`, plus `users` and `sessions` for the interface (migrations in `database/migrations/`).
 **Local dev uses Docker/Sail** — the `.env` points `DB_HOST=mysql` (the Sail container name). To run artisan commands outside Sail, update `DB_HOST` to `127.0.0.1`.
 
 ===

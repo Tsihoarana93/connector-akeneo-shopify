@@ -117,45 +117,78 @@ class ShopifyAdminService
      */
     public function ensureAkeneoCodeDefinition(): void
     {
-        $existing = $this->graphql(<<<'GRAPHQL'
-            query AkeneoCodeDefinition($namespace: String!, $key: String!) {
-              metafieldDefinitions(ownerType: PRODUCT, namespace: $namespace, key: $key, first: 1) {
-                nodes { id type { name } }
-              }
-            }
-            GRAPHQL, ['namespace' => self::AKENEO_CODE_NAMESPACE, 'key' => self::AKENEO_CODE_KEY]);
-
-        $definition = $existing['metafieldDefinitions']['nodes'][0] ?? null;
+        $definition = $this->findProductMetafieldDefinition(self::AKENEO_CODE_NAMESPACE, self::AKENEO_CODE_KEY);
 
         if ($definition !== null) {
-            if (($definition['type']['name'] ?? null) !== self::AKENEO_CODE_TYPE) {
+            if ($definition['type'] !== self::AKENEO_CODE_TYPE) {
                 throw new RuntimeException('The akeneo.code metafield definition must be of type '.self::AKENEO_CODE_TYPE.' to be used as a custom ID; delete it in Shopify so it can be recreated.');
             }
 
             return;
         }
 
+        $this->createProductMetafieldDefinition([
+            'name' => 'Akeneo code',
+            'namespace' => self::AKENEO_CODE_NAMESPACE,
+            'key' => self::AKENEO_CODE_KEY,
+            'type' => self::AKENEO_CODE_TYPE,
+            'capabilities' => ['uniqueValues' => ['enabled' => true]],
+        ]);
+    }
+
+    /**
+     * Find a product metafield definition by namespace and key.
+     *
+     * @return array{id: string, type: ?string}|null
+     *
+     * @throws RequestException|ConnectionException|RuntimeException
+     */
+    public function findProductMetafieldDefinition(string $namespace, string $key): ?array
+    {
         $result = $this->graphql(<<<'GRAPHQL'
-            mutation CreateAkeneoCodeDefinition($definition: MetafieldDefinitionInput!) {
+            query ProductMetafieldDefinition($namespace: String!, $key: String!) {
+              metafieldDefinitions(ownerType: PRODUCT, namespace: $namespace, key: $key, first: 1) {
+                nodes { id type { name } }
+              }
+            }
+            GRAPHQL, ['namespace' => $namespace, 'key' => $key]);
+
+        $definition = $result['metafieldDefinitions']['nodes'][0] ?? null;
+
+        return $definition === null ? null : ['id' => $definition['id'], 'type' => $definition['type']['name'] ?? null];
+    }
+
+    /**
+     * Create a product metafield definition and return its ID.
+     *
+     * @param  array<string, mixed>  $definition  a `MetafieldDefinitionInput` without `ownerType`
+     *
+     * @throws RequestException|ConnectionException|RuntimeException when the request fails or Shopify rejects the definition
+     */
+    public function createProductMetafieldDefinition(array $definition): string
+    {
+        $result = $this->graphql(<<<'GRAPHQL'
+            mutation CreateProductMetafieldDefinition($definition: MetafieldDefinitionInput!) {
               metafieldDefinitionCreate(definition: $definition) {
                 createdDefinition { id }
                 userErrors { field message code }
               }
             }
-            GRAPHQL, ['definition' => [
-            'name' => 'Akeneo code',
-            'namespace' => self::AKENEO_CODE_NAMESPACE,
-            'key' => self::AKENEO_CODE_KEY,
-            'type' => self::AKENEO_CODE_TYPE,
-            'ownerType' => 'PRODUCT',
-            'capabilities' => ['uniqueValues' => ['enabled' => true]],
-        ]]);
+            GRAPHQL, ['definition' => [...$definition, 'ownerType' => 'PRODUCT']]);
 
         $userErrors = $result['metafieldDefinitionCreate']['userErrors'] ?? [];
 
         if ($userErrors !== []) {
-            throw new RuntimeException('Could not create the akeneo.code metafield definition: '.collect($userErrors)->pluck('message')->implode('; '));
+            throw new RuntimeException("Could not create the {$definition['namespace']}.{$definition['key']} metafield definition: ".collect($userErrors)->pluck('message')->implode('; '));
         }
+
+        $id = $result['metafieldDefinitionCreate']['createdDefinition']['id'] ?? null;
+
+        if (! is_string($id)) {
+            throw new RuntimeException("Shopify did not return the {$definition['namespace']}.{$definition['key']} metafield definition.");
+        }
+
+        return $id;
     }
 
     /**

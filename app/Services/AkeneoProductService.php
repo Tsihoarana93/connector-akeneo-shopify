@@ -96,6 +96,36 @@ class AkeneoProductService
     }
 
     /**
+     * Iterate over every attribute, following Akeneo's `next` links.
+     *
+     * @return Generator<int, array<string, mixed>>
+     *
+     * @throws RequestException|ConnectionException
+     */
+    public function getAllAttributes(int $limit = self::MAX_PAGE_SIZE): Generator
+    {
+        return $this->paginate('/api/rest/v1/attributes', $limit, searchAfter: false);
+    }
+
+    /**
+     * Get the options of a select attribute as `{option code: labels}`.
+     *
+     * @return array<string, array<string, ?string>>
+     *
+     * @throws RequestException|ConnectionException
+     */
+    public function getAttributeOptions(string $attribute): array
+    {
+        $options = [];
+
+        foreach ($this->paginate('/api/rest/v1/attributes/'.rawurlencode($attribute).'/options', self::MAX_PAGE_SIZE, searchAfter: false) as $option) {
+            $options[$option['code']] = $option['labels'] ?? [];
+        }
+
+        return $options;
+    }
+
+    /**
      * Get the variant axes of a family variant, ordered from the first to the last level.
      *
      * @return list<string>
@@ -170,17 +200,19 @@ class AkeneoProductService
     }
 
     /**
+     * Follow `next` links through every page. Products and product models use `search_after`; other endpoints only support page offsets.
+     *
      * @return Generator<int, array<string, mixed>>
      *
      * @throws RequestException|ConnectionException
      */
-    private function paginate(string $path, int $limit): Generator
+    private function paginate(string $path, int $limit, bool $searchAfter = true): Generator
     {
         $data = $this->request()
-            ->get($this->baseUrl().$path, [
-                'pagination_type' => 'search_after',
+            ->get($this->baseUrl().$path, array_filter([
+                'pagination_type' => $searchAfter ? 'search_after' : null,
                 'limit' => min($limit, self::MAX_PAGE_SIZE),
-            ])
+            ]))
             ->throw()
             ->json() ?? [];
 

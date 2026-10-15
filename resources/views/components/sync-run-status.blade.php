@@ -2,11 +2,11 @@
 
 @php
     $classes = match ($status) {
-        \App\Enums\SyncRunStatus::Queued => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-        \App\Enums\SyncRunStatus::Running => 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200',
-        \App\Enums\SyncRunStatus::Succeeded => 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200',
-        \App\Enums\SyncRunStatus::Failed => 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+        \App\Enums\SyncRunStatus::Queued => 'border-line-strong text-ink-subtle',
+        \App\Enums\SyncRunStatus::Running => 'border-sky-400/30 bg-sky-400/5 text-sky-300 before:animate-pulse',
+        \App\Enums\SyncRunStatus::Succeeded => 'border-brand/30 bg-brand/5 text-brand',
+        \App\Enums\SyncRunStatus::Failed => 'border-red-500/30 bg-red-500/5 text-red-300',
     };
 @endphp
 
-<span {{ $attributes->class(['inline-flex rounded-full px-2 py-0.5 text-xs font-medium', $classes]) }}>{{ $status->label() }}</span>
+<span {{ $attributes->class(['badge', $classes]) }}>{{ $status->label() }}</span>

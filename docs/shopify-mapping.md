@@ -26,7 +26,33 @@ The current catalog gives 1,048 Shopify products, 49 of which have variants (up 
 | `variants[].barcodes` | `ean`, when there is one |
 | `files` (gallery) | The main image first (`image`, or `picture` when there's no `image`; from the root model, then the first product), then each distinct `variation_image` of the variants, in SKU order. Always sent, so it's `[]` for a product without images. |
 | `variants[].file` | The variant's `variation_image` (set on the colour-level sub-model, so all sizes of a colour share it). No variant image when it's empty, and Shopify then shows the main image. |
+| `metafields` | One `akeneo.{key}` metafield per attribute enabled on the `/attributes` page whose Shopify definition exists (see [Attribute metafields](#attribute-metafields)). Left out when no such attribute has a value. |
 | `status` | `DRAFT`, sent **only when the product is created** |
+
+## Attribute metafields
+
+Any other Akeneo attribute can be sent as a product metafield, chosen in the web interface at `/attributes`:
+
+1. `fidelity:sync-products`, or the **Update from Akeneo** button on `/attributes`, imports every attribute into `akeneo_attributes`, with the options of select attributes. Only Akeneo columns are written, so the choices below survive every update. The page shows when the list was last retrieved.
+2. On the attribute's page, tick **Send this attribute to Shopify**, check the name, key and type, and save.
+3. Click **Create in Shopify** (or **Create missing definitions** on the list). `App\Services\AttributeDefinitionManager` looks up `akeneo.{key}` first, links a definition that already exists with the same type, and otherwise creates it (pinned, so it shows on the product page in the admin). A definition of another type is reported as an error. After that, the name, key and type are locked, because Shopify can't change a definition's type.
+4. The next push sends the attribute in `input.metafields`, only for attributes that are enabled **and** have a definition. Every product with a value is pushed again once, because its payload hash changes.
+
+Values come from the root model, then from the first product of the group (so values set on sub-models are found too), with the same locale and channel order as the other fields. Only product-level metafields are sent; variant metafields aren't supported.
+
+| Akeneo type | Shopify types (suggested first) | Value sent |
+|---|---|---|
+| text | `single_line_text_field`, `multi_line_text_field` | the text |
+| textarea | `multi_line_text_field`, `single_line_text_field` | the text (line breaks collapsed for single line) |
+| simple select | `single_line_text_field` | the option's `en_US` label, e.g. `600` → `60°` |
+| multi select | `list.single_line_text_field`, `single_line_text_field` | the labels, as a JSON list or comma-separated |
+| boolean | `boolean`, `single_line_text_field` | `true`/`false`, or `Yes`/`No` |
+| number | `number_decimal`, `number_integer`, `single_line_text_field` | the number |
+| metric | `single_line_text_field` | `amount unit`, e.g. `800 gram` |
+| date | `date`, `single_line_text_field` | `YYYY-MM-DD` |
+| identifier, image, file, price collection, reference data… | — | can't be enabled |
+
+An empty value sends no metafield. A metafield that was already set in Shopify isn't deleted when the value is removed in Akeneo or the attribute is disabled; delete it by hand in Shopify if needed.
 
 ## Images
 

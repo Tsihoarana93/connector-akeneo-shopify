@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\SyncRunStatus;
+use App\Models\AkeneoAttribute;
 use App\Models\Product;
 use App\Models\ProductModel;
 use App\Models\SyncRun;
@@ -42,6 +43,7 @@ class SyncProductsTest extends TestCase
     {
         Http::fake([
             self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/products?pagination_type=search_after&limit=100' => Http::response(
                 $this->page([$this->product('SKU-1'), $this->product('SKU-2')], self::BASE_URL.'/api/rest/v1/products?search_after=SKU-2')
@@ -52,7 +54,7 @@ class SyncProductsTest extends TestCase
         ]);
 
         $this->artisan('fidelity:sync-products')
-            ->expectsOutput('Done. 0 product models and 3 products synced.')
+            ->expectsOutput('Done. 0 attributes, 0 product models and 3 products synced.')
             ->assertSuccessful();
 
         $this->assertSame(3, Product::query()->count());
@@ -114,6 +116,7 @@ class SyncProductsTest extends TestCase
 
         Http::fake([
             self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'fresh-token', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/products*' => function (Request $request) {
                 return $request->hasHeader('Authorization', 'Bearer fresh-token')
@@ -134,6 +137,7 @@ class SyncProductsTest extends TestCase
 
         Http::fake([
             self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/products*' => Http::response(['message' => 'Server error'], 500),
         ]);
@@ -188,7 +192,7 @@ class SyncProductsTest extends TestCase
         $this->artisan('fidelity:sync-products')->assertSuccessful();
         $this->artisan('fidelity:sync-products')->assertSuccessful();
 
-        Http::assertSentCount(5);
+        Http::assertSentCount(7);
     }
 
     public function test_it_syncs_product_models_with_the_variant_axes_of_root_models(): void
@@ -197,6 +201,7 @@ class SyncProductsTest extends TestCase
 
         Http::fake([
             self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([
                 ['code' => 'amor', 'parent' => null, 'family' => 'clothing', 'family_variant' => 'clothing_color_size', 'categories' => ['men'], 'values' => []],
                 ['code' => 'amor_blue', 'parent' => 'amor', 'family' => 'clothing', 'family_variant' => 'clothing_color_size', 'categories' => [], 'values' => []],
@@ -211,7 +216,7 @@ class SyncProductsTest extends TestCase
         ]);
 
         $this->artisan('fidelity:sync-products --prune')
-            ->expectsOutput('Done. 2 product models and 1 products synced.')
+            ->expectsOutput('Done. 0 attributes, 2 product models and 1 products synced.')
             ->expectsOutput('Pruned 1 product models no longer in Akeneo.')
             ->assertSuccessful();
 
@@ -226,6 +231,48 @@ class SyncProductsTest extends TestCase
         $this->assertDatabaseMissing('product_models', ['code' => 'gone-model']);
     }
 
+    public function test_it_syncs_attributes_with_select_options_and_keeps_their_shopify_mapping(): void
+    {
+        AkeneoAttribute::factory()->stale()->enabled()->withDefinition()->create([
+            'code' => 'wash_temperature',
+            'type' => 'pim_catalog_text',
+            'shopify_key' => 'washing',
+        ]);
+        AkeneoAttribute::factory()->stale()->create(['code' => 'gone_attribute']);
+
+        Http::fake([
+            self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes/wash_temperature/options*' => Http::response($this->page([
+                ['code' => '600', 'attribute' => 'wash_temperature', 'labels' => ['en_US' => '60°', 'fr_FR' => '60°']],
+            ])),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([
+                ['code' => 'wash_temperature', 'type' => 'pim_catalog_simpleselect', 'labels' => ['en_US' => 'Wash temperature'], 'localizable' => false, 'scopable' => false],
+                ['code' => 'description', 'type' => 'pim_catalog_textarea', 'labels' => ['en_US' => 'Description'], 'localizable' => true, 'scopable' => true],
+            ])),
+            self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([])),
+            self::BASE_URL.'/api/rest/v1/products*' => Http::response($this->page([$this->product('SKU-1')])),
+        ]);
+
+        $this->artisan('fidelity:sync-products --prune')
+            ->expectsOutput('Done. 2 attributes, 0 product models and 1 products synced.')
+            ->expectsOutput('Pruned 1 attributes no longer in Akeneo.')
+            ->assertSuccessful();
+
+        $washTemperature = AkeneoAttribute::query()->where('code', 'wash_temperature')->firstOrFail();
+        $this->assertSame('pim_catalog_simpleselect', $washTemperature->type);
+        $this->assertSame(['600' => ['en_US' => '60°', 'fr_FR' => '60°']], $washTemperature->options);
+        $this->assertTrue($washTemperature->shopify_enabled);
+        $this->assertSame('washing', $washTemperature->shopify_key);
+        $this->assertNotNull($washTemperature->shopify_definition_id);
+
+        $description = AkeneoAttribute::query()->where('code', 'description')->firstOrFail();
+        $this->assertTrue($description->localizable);
+        $this->assertNull($description->options);
+
+        $this->assertDatabaseMissing('akeneo_attributes', ['code' => 'gone_attribute']);
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/attributes') && str_contains($request->url(), 'pagination_type'));
+    }
+
     public function test_it_records_the_run_with_its_counts_and_log(): void
     {
         Product::factory()->stale()->create(['identifier' => 'GONE']);
@@ -237,12 +284,12 @@ class SyncProductsTest extends TestCase
         $this->assertSame('fidelity:sync-products', $run->command);
         $this->assertSame(SyncRunStatus::Succeeded, $run->status);
         $this->assertSame(['prune' => true], $run->options);
-        $this->assertEquals(['product_models' => 0, 'products' => 1, 'pruned_product_models' => 0, 'pruned_products' => 1], $run->counts);
+        $this->assertEquals(['attributes' => 0, 'product_models' => 0, 'products' => 1, 'pruned_product_models' => 0, 'pruned_products' => 1, 'pruned_attributes' => 0], $run->counts);
         $this->assertNull($run->user_id);
         $this->assertNotNull($run->finished_at);
 
         $log = Storage::disk('local')->get($run->log_path);
-        $this->assertStringContainsString('INFO Done. 0 product models and 1 products synced.', $log);
+        $this->assertStringContainsString('INFO Done. 0 attributes, 0 product models and 1 products synced.', $log);
         $this->assertStringContainsString('INFO Pruned 1 products no longer in Akeneo.', $log);
         $this->assertStringContainsString('Finished: succeeded', $log);
     }
@@ -288,6 +335,55 @@ class SyncProductsTest extends TestCase
         $this->assertSame(SyncRunStatus::Running, $push->fresh()->status);
     }
 
+    public function test_it_does_not_start_while_another_run_holds_the_akeneo_lock(): void
+    {
+        $running = SyncRun::factory()->running()->create();
+        Cache::lock(SyncRun::AKENEO_WRITES_LOCK, 60)->get();
+
+        $this->artisan('fidelity:sync-products --prune')
+            ->expectsOutput("Not started: another run holds the fidelity:akeneo-writes lock. Try again when it finishes. The latest fidelity:sync-products run still marked as running is #{$running->id}.")
+            ->assertFailed();
+
+        Http::assertNothingSent();
+        $this->assertSame(SyncRunStatus::Running, $running->fresh()->status);
+        $this->assertSame(1, SyncRun::query()->count());
+    }
+
+    public function test_a_queued_run_is_closed_with_the_reason_when_the_lock_is_held(): void
+    {
+        $queued = SyncRun::factory()->queued()->create();
+        Cache::lock(SyncRun::AKENEO_WRITES_LOCK, 60)->get();
+
+        $this->artisan('fidelity:sync-products', ['--sync-run' => $queued->id])->assertFailed();
+
+        $queued->refresh();
+        $this->assertSame(SyncRunStatus::Failed, $queued->status);
+        $this->assertSame('Not started: another run holds the fidelity:akeneo-writes lock. Try again when it finishes.', $queued->message);
+        $this->assertNotNull($queued->finished_at);
+    }
+
+    public function test_it_releases_the_lock_when_it_finishes(): void
+    {
+        $this->fakeAkeneo([$this->product('SKU-1')]);
+
+        $this->artisan('fidelity:sync-products')->assertSuccessful();
+
+        $this->assertTrue(Cache::lock(SyncRun::AKENEO_WRITES_LOCK, 60)->get());
+        $this->assertNull(SyncRun::query()->sole()->lock_owner);
+    }
+
+    public function test_it_releases_the_lock_when_akeneo_fails(): void
+    {
+        Http::fake([
+            self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response(['message' => 'Server error'], 500),
+        ]);
+
+        $this->artisan('fidelity:sync-products')->assertFailed();
+
+        $this->assertTrue(Cache::lock(SyncRun::AKENEO_WRITES_LOCK, 60)->get());
+    }
+
     /**
      * @param  list<array<string, mixed>>  $products
      */
@@ -295,6 +391,7 @@ class SyncProductsTest extends TestCase
     {
         Http::fake([
             self::BASE_URL.'/api/oauth/v1/token' => Http::response(['access_token' => 'token-1', 'expires_in' => 3600]),
+            self::BASE_URL.'/api/rest/v1/attributes*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/product-models*' => Http::response($this->page([])),
             self::BASE_URL.'/api/rest/v1/products*' => Http::response($this->page($products)),
         ]);
